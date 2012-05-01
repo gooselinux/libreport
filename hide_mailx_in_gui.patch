@@ -1,0 +1,5 @@
+--- libreport-2.0.5/src/plugins/mailx_event.conf	2011-07-18 15:28:24.000000000 +0200
++++ libreport-2.0.5_/src/plugins/mailx_event.conf	2011-07-20 15:14:02.146810086 +0200
+@@ -1 +1 @@
+-EVENT=report_Mailx      reporter-mailx
++#EVENT=report_Mailx      reporter-mailx

@@ -1,0 +1,27 @@
+From 7fb3b526e56fe08c8481bf8d29e15f99bd766172 Mon Sep 17 00:00:00 2001
+Message-Id: <7fb3b526e56fe08c8481bf8d29e15f99bd766172.1319194024.git.npajkovs@redhat.com>
+From: Nikola Pajkovsky <npajkovs@redhat.com>
+Date: Thu, 20 Oct 2011 18:10:46 +0200
+Subject: [PATCH] report-cli -r FAKE-DIR return 1 instead of 0
+
+Signed-off-by: Nikola Pajkovsky <npajkovs@redhat.com>
+---
+ src/cli/cli.c |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/src/cli/cli.c b/src/cli/cli.c
+index 1c41900..7fc150d 100644
+--- a/src/cli/cli.c
++++ b/src/cli/cli.c
+@@ -177,7 +177,7 @@ int main(int argc, char** argv)
+         {
+             struct dump_dir *dd = dd_opendir(dump_dir_name, DD_OPEN_READONLY);
+             if (!dd)
+-                break;
++                return 1;
+             int readonly = !dd->locked;
+             dd_close(dd);
+             if (readonly)
+-- 
+1.7.7.369.g08cfd
+

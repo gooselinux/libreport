@@ -1,0 +1,313 @@
+From a5282fce03ae9df69f8be3d030e640841ee0d711 Mon Sep 17 00:00:00 2001
+Message-Id: <a5282fce03ae9df69f8be3d030e640841ee0d711.1314356832.git.npajkovs@redhat.com>
+From: Nikola Pajkovsky <npajkovs@redhat.com>
+Date: Thu, 18 Aug 2011 13:45:52 +0200
+Subject: [PATCH] update man pages
+
+cherry picked from commits
+a3e009f8081f732b8153716954acc88ef4d54a74
+cad632aa16e970a0340ab24c87adfad831b2f52b
+cbd393a275e4dccab1917f6e660f10a607326e83
+e129410e4bbd228d0759a7100ed38f8ec436d1dd
+da25595be9d02656a6863d5647b00458d10384dc
+
+diff --git a/src/lib/Makefile.am b/src/lib/Makefile.am
+index 7b870d9..e914f8a 100644
+--- a/src/lib/Makefile.am
++++ b/src/lib/Makefile.am
+@@ -118,6 +118,20 @@ libabrt_web_la_LIBADD = \
+     $(LIBXML_LIBS) \
+     $(XMLRPC_LIBS) $(XMLRPC_CLIENT_LIBS)
+ 
++MAN_TXT = \
++    report_event.conf.txt
++
++# Manual pages are generated from .txt via Docbook
++man5_MANS = report_event.conf.5
++
++%.5: %.xml
++	$(XMLTO_SILENT) xmlto man $< 2>&1 | sed '/Note/d'
++
++%.xml: %.txt ../../asciidoc.conf
++	$(ASCIIDOC_SILENT) asciidoc --backend=docbook --doctype=manpage --conf-file ../../asciidoc.conf -aabrt_version=$(PACKAGE_VERSION) -o $@ $<
++
++EXTRA_DIST = $(MAN_TXT)
++
+ $(DESTDIR)/$(DEBUG_DUMPS_DIR):
+ 	$(mkdir_p) '$@'
+ # no need to chmod it here
+diff --git a/src/lib/report_event.conf.txt b/src/lib/report_event.conf.txt
+new file mode 100644
+index 0000000..9549eea
+--- /dev/null
++++ b/src/lib/report_event.conf.txt
+@@ -0,0 +1,68 @@
++report_event.conf(5)
++====================
++
++NAME
++----
++report_event.conf - configuration file for libreport.
++
++DESCRIPTION
++-----------
++This configuration file specifies which programs should be run
++when the specified event occurs in dump directory lifetime.
++
++It consists of directives and rules.
++
++Directives start with a reserved word. Currently, there is
++only one directive, "include".
++
++include 'FILE'::
++   This directive causes files which match FILE to be read
++   and parsed as if they are inserted textually where this directive
++   occurs.
++   FILE can use shell pattern metacharacters (*,?,etc) to specify
++   multiple files. Relative paths are interpreted relative to current
++   file.
++
++Rule starts with a line with non-space leading character.
++All subsequent lines which start with space or tab form one rule.
++Note that separating newline is retained.
++
++Rules may be commented out with #. One # is sufficient to comment out
++even a multi-line rule (no need to comment out every line).
++
++Rules specify which programs to run on the dump directory.
++Each rule may have conditions to be checked before the program is run.
++
++Conditions have form VAR=VAL or VAL~=REGEX, where VAR is either
++word "EVENT" or a name of dump directory element to be checked
++(for example, "executable", "package", hostname" etc).
++
++If all conditions match, the remaining part of the rule
++(the "program" part) is run in the shell.
++All shell language constructs are valid.
++All stdout and stderr output is captured and passed to ABRT
++and possibly to ABRT's frontends and shown to the user.
++
++If the program terminates with nonzero exit code,
++the event processing is considered unsuccessful and is stopped.
++Last captured output line, if any, is considered to be
++the error message indicating the reason of the failure,
++and may be used by abrt as such.
++
++If the program terminates successfully, next rule is read
++and processed. This process is repeated until the end of this file.
++
++EXAMPLES
++--------
++EVENT=post-create analyzer=Python   abrt-action-analyze-python
++
++EVENT=post-create
++        getent passwd "`cat uid`" | cut -d: -f1 >username
++
++SEE ALSO
++--------
++abrtd(8)
++
++AUTHOR
++------
++Manual page written by Denys Vlasenko <dvlasenk@redhat.com>.
+diff --git a/src/plugins/Makefile.am b/src/plugins/Makefile.am
+index e52975c..19e53fc 100644
+--- a/src/plugins/Makefile.am
++++ b/src/plugins/Makefile.am
+@@ -46,8 +46,10 @@ MAN_TXT = \
+     reporter-print.txt \
+     reporter-mailx.txt \
+     reporter-bugzilla.txt \
++    reporter-rhtsupport.txt \
+     reporter-kerneloops.txt \
+-    reporter-upload.txt
++    reporter-upload.txt \
++    report.txt
+ 
+ # Manual pages are generated from .txt via Docbook
+ man1_MANS = ${MAN_TXT:%.txt=%.1}
+@@ -64,7 +66,6 @@ CLEANFILES = $(man1_MANS)
+ EXTRA_DIST = \
+     $(man_MANS) \
+     $(MAN_TXT) \
+-    $(man1_MANS) \
+     report_Bugzilla.xml.in \
+     report_Bugzilla.conf \
+     report_Logger.conf \
+diff --git a/src/plugins/report.txt b/src/plugins/report.txt
+new file mode 100644
+index 0000000..978e798
+--- /dev/null
++++ b/src/plugins/report.txt
+@@ -0,0 +1,41 @@
++report(1)
++=========
++
++NAME
++----
++report - uploads FILEs to specified ticket on TARGET.
++
++SYNOPSIS
++--------
++'report' [-v] -T TARGET -t ID FILE...
++
++DESCRIPTION
++-----------
++This tool is provided to ease transition of users of report package
++to libreport. Recognized TARGETs are 'strata' and 'bugzilla',
++first one invokes upload to RHTSupport and second - to Bugzilla.
++
++Configuration (such as login data) can be supplied via files
++/etc/libreport/plugins/bugzilla.conf and /etc/libreport/plugins/rhtsupport.conf,
++or via environment variables - read documentation of reporter-bugzilla and
++reporter-rhtsupport tools."
++
++
++OPTIONS
++-------
++-T::
++--target::
++    "strata" or "bugzilla"
++
++-t::
++--ticket ID::
++    Ticket/case ID
++
++SEE ALSO
++--------
++*reporter-bugzilla*(1),
++*reporter-rhtsupport*(1)
++
++AUTHORS
++-------
++* ABRT team
+diff --git a/src/plugins/reporter-bugzilla.txt b/src/plugins/reporter-bugzilla.txt
+index 9d525d1..c78a1ba 100644
+--- a/src/plugins/reporter-bugzilla.txt
++++ b/src/plugins/reporter-bugzilla.txt
+@@ -1,4 +1,4 @@
+-reporter-buzilla(1)
++reporter-bugzilla(1)
+ ====================
+ 
+ NAME
+@@ -9,6 +9,11 @@ SYNOPSIS
+ --------
+ 'reporter-bugzilla' [-v] [-c CONFFILE] -d DIR
+ 
++Or:
++
++'reporter-bugzilla' [-v] [-c CONFFILE] [-d DIR] -t[ID] FILE...
++
++
+ DESCRIPTION
+ -----------
+ The tool reads problem dump directory DIR. Then it logs in to Bugzilla
+@@ -39,7 +44,7 @@ Configuration file lines should have 'PARAM = VALUE' format. The parameters are:
+ 	Bugzilla HTTP(S) address. (default: https://bugzilla.redhat.com)
+ 
+ 'SSLVerify'::
+-	Use yes/true/on/1 to verify Bugzilla SSL certificate. (default: yes)
++	Use yes/true/on/1 to verify server's SSL certificate. (default: yes)
+ 
+ Parameters can be overridden via $Bugzilla_PARAM environment variables.
+ 
+@@ -62,6 +67,13 @@ OPTIONS
+ -c CONFFILE::
+    Path to configuration file.
+ 
++-t[ID]::
++   Upload FILEs to the already created bug on Bugzilla site
++
+ SEE ALSO
+ --------
+ abrt_event.conf
++
++AUTHORS
++-------
++* ABRT team
+diff --git a/src/plugins/reporter-rhtsupport.txt b/src/plugins/reporter-rhtsupport.txt
+new file mode 100644
+index 0000000..4c9ffd4
+--- /dev/null
++++ b/src/plugins/reporter-rhtsupport.txt
+@@ -0,0 +1,76 @@
++reporter-rhtsupport(1)
++======================
++
++NAME
++----
++reporter-rhtsupport - Reports problem to RHTSupport.
++
++SYNOPSIS
++--------
++'reporter-rhtsupport' [-v] [-c CONFFILE] -d DIR
++
++Or:
++
++'reporter-rhtsupport' [-v] [-c CONFFILE] [-d DIR] -t[ID] FILE...
++
++DESCRIPTION
++-----------
++The tool reads problem dump directory DIR. Then it logs in to RHTSupport
++and creates a new case.
++
++The URL to new case is printed to stdout and recorded in 'reported_to'
++element in DIR.
++
++If not specified, CONFFILE defaults to /etc/libreport/plugins/rhtsupport.conf.
++
++Option -t uploads FILEs to the already created case on RHTSupport site.
++The case ID is retrieved from directory specified by -d DIR.
++If problem data in DIR was never reported to RHTSupport, upload will fail.
++
++Option -tCASE uploads FILEs to the case CASE on RHTSupport site.
++-d DIR is ignored.
++
++
++Configuration file
++~~~~~~~~~~~~~~~~~~
++Configuration file lines should have 'PARAM = VALUE' format. The parameters are:
++
++'Login'::
++	Login to RHTSupport account.
++
++'Password'::
++	Password to RHTSupport account.
++
++'URL'::
++	HTTP(S) address. (default: https://api.access.redhat.com/rs)
++
++'SSLVerify'::
++	Use yes/true/on/1 to verify server's SSL certificate. (default: yes)
++
++Parameters can be overridden via $RHTSupport_PARAM environment variables.
++
++Integration with ABRT events
++~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++'reporter-rhtsupport' can be used as an ABRT reporter. Example
++fragment for /etc/libreport/report_event.conf:
++
++------------
++# Report Python crashes
++EVENT=report_RHTSupport analyzer=Python
++      reporter-rhtsupport -d . -c /etc/libreport/plugins/rhtsupport.conf
++------------
++
++OPTIONS
++-------
++-d DIR::
++   Path to dump directory.
++
++-c CONFFILE::
++   Path to configuration file.
++
++-t[ID]::
++   Upload FILEs to the already created case on RHTSupport site.
++
++SEE ALSO
++--------
++abrt_event.conf
+-- 
+1.7.6.1.385.gb7fcd0
+

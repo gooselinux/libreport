@@ -1,0 +1,6 @@
+--- libreport-2.0.5/src/plugins/bugzilla_event.conf	2011-10-13 09:33:01.582620478 +0200
++++ libreport-2.0.5_/src/plugins/bugzilla_event.conf	2011-10-13 09:32:14.338565262 +0200
+@@ -1 +1,2 @@
+-EVENT=report_Bugzilla analyzer=libreport reporter-bugzilla -b
++# uncomment the following line to enable the bugzilla reporter for Anaconda
++#EVENT=report_Bugzilla analyzer=libreport reporter-bugzilla -b

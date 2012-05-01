@@ -1,0 +1,26 @@
+From 4fde62509cb399d07c7190bffbf60601f28b3ac7 Mon Sep 17 00:00:00 2001
+From: Jiri Moskovcak <jmoskovc@redhat.com>
+Date: Fri, 21 Oct 2011 16:13:08 +0200
+Subject: [PATCH 3/4] add \n before every hepyrlink in dialogs, so it's more
+ readable
+
+---
+ src/gtk-helpers/hyperlinks.c |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/src/gtk-helpers/hyperlinks.c b/src/gtk-helpers/hyperlinks.c
+index 8f8e64c..04222f8 100644
+--- a/src/gtk-helpers/hyperlinks.c
++++ b/src/gtk-helpers/hyperlinks.c
+@@ -18,7 +18,7 @@ char *tag_url(const char* line)
+         {
+             char *url_end = strchrnul(url_start, ' '); //TODO: also '.', ',', '\t', '\n'...
+             int len = url_end - url_start;
+-            char *hyperlink = xasprintf("<a href=\"%.*s\">%.*s</a>",
++            char *hyperlink = xasprintf("\n<a href=\"%.*s\">%.*s</a>",
+                             len, url_start,
+                             len, url_start
+             );
+-- 
+1.7.6.4
+

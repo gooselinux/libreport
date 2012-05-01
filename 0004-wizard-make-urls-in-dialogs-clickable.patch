@@ -1,0 +1,156 @@
+From 5059a596ca69ca9c97eb3afc4699487f2203b8a6 Mon Sep 17 00:00:00 2001
+From: Jiri Moskovcak <jmoskovc@redhat.com>
+Date: Wed, 19 Oct 2011 17:45:00 +0200
+Subject: [PATCH 4/5] wizard: make urls in dialogs clickable
+
+- took the improved version from Denys
+
+Conflicts:
+
+	src/gui-wizard-gtk/wizard.c
+---
+ src/gtk-helpers/Makefile.am              |    1 +
+ src/gtk-helpers/hyperlinks.c             |   39 ++++++++++++++++++++++++++++++
+ src/gtk-helpers/internal_libreport_gtk.h |    2 +
+ src/gui-wizard-gtk/wizard.c              |   19 +++++++++++---
+ 4 files changed, 57 insertions(+), 4 deletions(-)
+ create mode 100644 src/gtk-helpers/hyperlinks.c
+
+diff --git a/src/gtk-helpers/Makefile.am b/src/gtk-helpers/Makefile.am
+index 9bb20bc..75182f5 100644
+--- a/src/gtk-helpers/Makefile.am
++++ b/src/gtk-helpers/Makefile.am
+@@ -11,6 +11,7 @@ lib_LTLIBRARIES = \
+ libreport_gtk_la_SOURCES = \
+     event_config_dialog.c \
+     abrt-keyring.c \
++    hyperlinks.c \
+     autowrapped_label.c
+ 
+ libreport_gtk_la_CPPFLAGS = \
+diff --git a/src/gtk-helpers/hyperlinks.c b/src/gtk-helpers/hyperlinks.c
+new file mode 100644
+index 0000000..8f8e64c
+--- /dev/null
++++ b/src/gtk-helpers/hyperlinks.c
+@@ -0,0 +1,39 @@
++#include <stdio.h>
++#include <string.h>
++#include <stdlib.h>
++#include <internal_libreport_gtk.h>
++
++char *tag_url(const char* line)
++{
++    static const char *const known_url_prefixes[] = {"http://", "https://", "ftp://", "file://", NULL};
++
++    char *result = xstrdup(line);
++
++    const char *const *pfx = known_url_prefixes;
++    while (*pfx != NULL)
++    {
++        char *cur_pos = result;
++        char *url_start;
++        while ((url_start = strstr(cur_pos, *pfx)) != NULL)
++        {
++            char *url_end = strchrnul(url_start, ' '); //TODO: also '.', ',', '\t', '\n'...
++            int len = url_end - url_start;
++            char *hyperlink = xasprintf("<a href=\"%.*s\">%.*s</a>",
++                            len, url_start,
++                            len, url_start
++            );
++            len = url_start - result;
++            char *old = result;
++            result = xasprintf("%.*s%s%s",
++                            len, result,
++                            hyperlink,
++                            url_end
++            );
++            cur_pos = result + len + strlen(hyperlink);
++            free(old);
++            free(hyperlink);
++        }
++        pfx++;
++    }
++    return result;
++}
+diff --git a/src/gtk-helpers/internal_libreport_gtk.h b/src/gtk-helpers/internal_libreport_gtk.h
+index 737cd7d..94dd39b 100644
+--- a/src/gtk-helpers/internal_libreport_gtk.h
++++ b/src/gtk-helpers/internal_libreport_gtk.h
+@@ -44,6 +44,8 @@ guint32 find_keyring_item_id_for_event(const char *event_name);
+ #define show_event_config_dialog libreport_show_event_config_dialog
+ int show_event_config_dialog(const char *event_name, GtkWindow *parent);
+ 
++char * tag_url(const char* line);
++
+ #ifdef __cplusplus
+ }
+ #endif
+diff --git a/src/gui-wizard-gtk/wizard.c b/src/gui-wizard-gtk/wizard.c
+index 1a3a382..2198576 100644
+--- a/src/gui-wizard-gtk/wizard.c
++++ b/src/gui-wizard-gtk/wizard.c
+@@ -1168,6 +1168,8 @@ static gboolean consume_cmd_output(GIOChannel *source, GIOCondition condition, g
+ 
+             msg = line->buf;
+ 
++            char * tagged_msg = NULL;
++
+             /* alert dialog */
+             if (strncmp(REPORT_PREFIX_ALERT, msg, alert_prefix_len) == 0)
+             {
+@@ -1177,7 +1179,9 @@ static gboolean consume_cmd_output(GIOChannel *source, GIOCondition condition, g
+                     GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+                     GTK_MESSAGE_WARNING,
+                     GTK_BUTTONS_CLOSE,
+-                    msg);
++                    "%s", msg);
++                tagged_msg = tag_url(msg);
++                gtk_message_dialog_set_markup(GTK_MESSAGE_DIALOG(dialog), tagged_msg);
+ 
+                 gtk_dialog_run(GTK_DIALOG(dialog));
+                 gtk_widget_destroy(dialog);
+@@ -1191,7 +1195,9 @@ static gboolean consume_cmd_output(GIOChannel *source, GIOCondition condition, g
+                     GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+                     GTK_MESSAGE_QUESTION,
+                     GTK_BUTTONS_OK_CANCEL,
+-                    msg);
++                    "%s", msg);
++                tagged_msg = tag_url(msg);
++                gtk_message_dialog_set_markup(GTK_MESSAGE_DIALOG(dialog), tagged_msg);
+ 
+                 GtkWidget *vbox = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+                 GtkWidget *textbox = gtk_entry_new();
+@@ -1233,7 +1239,9 @@ static gboolean consume_cmd_output(GIOChannel *source, GIOCondition condition, g
+                     GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+                     GTK_MESSAGE_QUESTION,
+                     GTK_BUTTONS_OK_CANCEL,
+-                    msg);
++                    "%s", msg);
++                tagged_msg = tag_url(msg);
++                gtk_message_dialog_set_markup(GTK_MESSAGE_DIALOG(dialog), tagged_msg);
+ 
+                 GtkWidget *vbox = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+                 GtkWidget *textbox = gtk_entry_new();
+@@ -1276,7 +1284,9 @@ static gboolean consume_cmd_output(GIOChannel *source, GIOCondition condition, g
+                     GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+                     GTK_MESSAGE_QUESTION,
+                     GTK_BUTTONS_YES_NO,
+-                    msg);
++                    "%s", msg);
++                tagged_msg = tag_url(msg);
++                gtk_message_dialog_set_markup(GTK_MESSAGE_DIALOG(dialog), tagged_msg);
+ 
+                 if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_YES)
+                 {
+@@ -1313,6 +1323,7 @@ static gboolean consume_cmd_output(GIOChannel *source, GIOCondition condition, g
+ 
+             /* jump to next line */
+             raw = newline + 1;
++            free(tagged_msg);
+         }
+ 
+         /* beginning of next line. the line continues by next read() */
+-- 
+1.7.6.4
+

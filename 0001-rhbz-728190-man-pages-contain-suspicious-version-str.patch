@@ -1,0 +1,74 @@
+From 237e516fc738e40bc51a2088e1c7e3df983ed243 Mon Sep 17 00:00:00 2001
+Message-Id: <237e516fc738e40bc51a2088e1c7e3df983ed243.1318949703.git.npajkovs@redhat.com>
+From: Nikola Pajkovsky <npajkovs@redhat.com>
+Date: Tue, 18 Oct 2011 16:49:17 +0200
+Subject: [PATCH] rhbz#728190 - man pages contain suspicious version string
+
+Signed-off-by: Nikola Pajkovsky <npajkovs@redhat.com>
+(cherry picked from commit f261edf4b07aad8f175f8cc5cb755053994c2bba)
+---
+ asciidoc.conf           |    6 +++---
+ src/cli/Makefile.am     |    2 +-
+ src/lib/Makefile.am     |    2 +-
+ src/plugins/Makefile.am |    2 +-
+ 4 files changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/asciidoc.conf b/asciidoc.conf
+index 7bbce41..26462ca 100644
+--- a/asciidoc.conf
++++ b/asciidoc.conf
+@@ -6,9 +6,9 @@ template::[header-declarations]
+ <refmeta>
+ <refentrytitle>{mantitle}</refentrytitle>
+ <manvolnum>{manvolnum}</manvolnum>
+-<refmiscinfo class="source">abrt</refmiscinfo>
+-<refmiscinfo class="version">{abrt_version}</refmiscinfo>
+-<refmiscinfo class="manual">ABRT Manual</refmiscinfo>
++<refmiscinfo class="source">LIBREPORT</refmiscinfo>
++<refmiscinfo class="version">{libreport_version}</refmiscinfo>
++<refmiscinfo class="manual">LIBREPORT MANUAL</refmiscinfo>
+ </refmeta>
+ <refnamediv>
+   <refname>{manname}</refname>
+diff --git a/src/cli/Makefile.am b/src/cli/Makefile.am
+index bb7a9f2..c89133b 100644
+--- a/src/cli/Makefile.am
++++ b/src/cli/Makefile.am
+@@ -32,7 +32,7 @@ man1_MANS = ${MAN_TXT:%.txt=%.1}
+ 	$(XMLTO_SILENT) xmlto man $< 2>&1 | sed '/Note/d'
+ 
+ %.xml: %.txt ../../asciidoc.conf
+-	$(ASCIIDOC_SILENT) asciidoc --backend=docbook --doctype=manpage --conf-file ../../asciidoc.conf -aabrt_version=$(PACKAGE_VERSION) -o $@ $<
++	$(ASCIIDOC_SILENT) asciidoc --backend=docbook --doctype=manpage --conf-file ../../asciidoc.conf -alibreport_version=$(PACKAGE_VERSION) -o $@ $<
+ 
+ CLEANFILES = $(man1_MANS)
+ 
+diff --git a/src/lib/Makefile.am b/src/lib/Makefile.am
+index e914f8a..252c50c 100644
+--- a/src/lib/Makefile.am
++++ b/src/lib/Makefile.am
+@@ -128,7 +128,7 @@ man5_MANS = report_event.conf.5
+ 	$(XMLTO_SILENT) xmlto man $< 2>&1 | sed '/Note/d'
+ 
+ %.xml: %.txt ../../asciidoc.conf
+-	$(ASCIIDOC_SILENT) asciidoc --backend=docbook --doctype=manpage --conf-file ../../asciidoc.conf -aabrt_version=$(PACKAGE_VERSION) -o $@ $<
++	$(ASCIIDOC_SILENT) asciidoc --backend=docbook --doctype=manpage --conf-file ../../asciidoc.conf -alibreport_version=$(PACKAGE_VERSION) -o $@ $<
+ 
+ EXTRA_DIST = $(MAN_TXT)
+ 
+diff --git a/src/plugins/Makefile.am b/src/plugins/Makefile.am
+index 19e53fc..1f80447 100644
+--- a/src/plugins/Makefile.am
++++ b/src/plugins/Makefile.am
+@@ -58,7 +58,7 @@ man1_MANS = ${MAN_TXT:%.txt=%.1}
+ 	$(XMLTO_SILENT) xmlto man $< 2>&1 | sed '/Note/d'
+ 
+ %.xml: %.txt ../../asciidoc.conf
+-	$(ASCIIDOC_SILENT) asciidoc --backend=docbook --doctype=manpage --conf-file ../../asciidoc.conf -aabrt_version=$(PACKAGE_VERSION) -o $@ $<
++	$(ASCIIDOC_SILENT) asciidoc --backend=docbook --doctype=manpage --conf-file ../../asciidoc.conf -alibreport_version=$(PACKAGE_VERSION) -o $@ $<
+ 
+ 
+ CLEANFILES = $(man1_MANS)
+-- 
+1.7.7.369.g08cfd
+

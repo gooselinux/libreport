@@ -1,0 +1,204 @@
+From 453db1b896228a8be13215fe0ffe0ad362ab71c5 Mon Sep 17 00:00:00 2001
+From: Denys Vlasenko <dvlasenk@redhat.com>
+Date: Wed, 3 Aug 2011 17:49:26 +0200
+Subject: [PATCH 10/13] remove report_result.c, move reported_to related code
+ to dump_dir.{c,h}
+
+Signed-off-by: Denys Vlasenko <dvlasenk@redhat.com>
+---
+ src/include/dump_dir.h           |   19 ++++++++
+ src/include/internal_libreport.h |   18 -------
+ src/lib/dump_dir.c               |   94 ++++++++++++++++++++++----------------
+ src/lib/report_result.c          |   28 -----------
+ 5 files changed, 73 insertions(+), 87 deletions(-)
+ delete mode 100644 src/lib/report_result.c
+
+diff --git a/src/include/dump_dir.h b/src/include/dump_dir.h
+index fa56733..6d77a49 100644
+--- a/src/include/dump_dir.h
++++ b/src/include/dump_dir.h
+@@ -71,6 +71,25 @@ void dd_save_binary(struct dump_dir *dd, const char *name, const char *data, uns
+ /* Returns 0 if directory is deleted or not found */
+ int dd_delete(struct dump_dir *dd);
+
++
++/* reported_to handling */
++#define add_reported_to libreport_add_reported_to
++void add_reported_to(struct dump_dir *dd, const char *line);
++struct report_result {
++    char *url;
++    char *msg;
++    /* char *whole_line; */
++    /* time_t timestamp; */
++    /* ^^^ if you add more fields, don't forget to update free_report_result() */
++};
++typedef struct report_result report_result_t;
++#define free_report_result libreport_free_report_result
++void free_report_result(struct report_result *result);
++#define find_in_reported_to libreport_find_in_reported_to
++report_result_t *find_in_reported_to(struct dump_dir *dd, const char *prefix);
++/* TODO: GList *read_entire_reported_to(dd); */
++
++
+ void delete_dump_dir(const char *dirname);
+
+ #ifdef __cplusplus
+diff --git a/src/include/internal_libreport.h b/src/include/internal_libreport.h
+index f11e6a0..5986f68 100644
+--- a/src/include/internal_libreport.h
++++ b/src/include/internal_libreport.h
+@@ -652,24 +652,6 @@ enum {
+     EVENT_LOG_LOW_WATERMARK  = 20 * 1024,
+ };
+
+-struct report_result {
+-    char *url;
+-    char *msg;
+-    /* char *whole_line; */
+-    /* time_t timestamp; */
+-    /* ^^^ if you add more fields, don't forget to update free_report_result() */
+-};
+-typedef struct report_result report_result_t;
+-
+-#define free_report_result libreport_free_report_result
+-void free_report_result(struct report_result *result);
+-
+-#define add_reported_to libreport_add_reported_to
+-void add_reported_to(struct dump_dir *dd, const char *line);
+-
+-#define find_in_reported_to libreport_find_in_reported_to
+-report_result_t *find_in_reported_to(struct dump_dir *dd, const char *prefix);
+-
+ #define log_problem_data libreport_log_problem_data
+ void log_problem_data(problem_data_t *problem_data, const char *pfx);
+
+diff --git a/src/lib/dump_dir.c b/src/lib/dump_dir.c
+index fad03eb..1f03043 100644
+--- a/src/lib/dump_dir.c
++++ b/src/lib/dump_dir.c
+@@ -767,6 +767,48 @@ void dd_save_binary(struct dump_dir* dd, const char* name, const char* data, uns
+     free(full_path);
+ }
+
++DIR *dd_init_next_file(struct dump_dir *dd)
++{
++//    if (!dd->locked)
++//        error_msg_and_die("dump_dir is not opened"); /* bug */
++
++    if (dd->next_dir)
++        closedir(dd->next_dir);
++
++    dd->next_dir = opendir(dd->dd_dirname);
++    if (!dd->next_dir)
++    {
++        error_msg("Can't open directory '%s'", dd->dd_dirname);
++    }
++
++    return dd->next_dir;
++}
++
++int dd_get_next_file(struct dump_dir *dd, char **short_name, char **full_name)
++{
++    if (dd->next_dir == NULL)
++        return 0;
++
++    struct dirent *dent;
++    while ((dent = readdir(dd->next_dir)) != NULL)
++    {
++        if (is_regular_file(dent, dd->dd_dirname))
++        {
++            if (short_name)
++                *short_name = xstrdup(dent->d_name);
++            if (full_name)
++                *full_name = concat_path_file(dd->dd_dirname, dent->d_name);
++            return 1;
++        }
++    }
++
++    closedir(dd->next_dir);
++    dd->next_dir = NULL;
++    return 0;
++}
++
++/* reported_to handling */
++
+ void add_reported_to(struct dump_dir *dd, const char *line)
+ {
+     if (!dd->locked)
+@@ -798,6 +840,15 @@ void add_reported_to(struct dump_dir *dd, const char *line)
+     free(reported_to);
+ }
+
++void free_report_result(struct report_result *result)
++{
++    if (!result)
++        return;
++    free(result->url);
++    free(result->msg);
++    free(result);
++}
++
+ static report_result_t *parse_reported_line(const char *line)
+ {
+     report_result_t *result = xzalloc(sizeof(*result));
+@@ -836,7 +887,8 @@ static report_result_t *parse_reported_line(const char *line)
+
+ report_result_t *find_in_reported_to(struct dump_dir *dd, const char *prefix)
+ {
+-    char *reported_to = dd_load_text_ext(dd, FILENAME_REPORTED_TO, DD_FAIL_QUIETLY_ENOENT | DD_LOAD_TEXT_RETURN_NULL_ON_FAILURE);
++    char *reported_to = dd_load_text_ext(dd, FILENAME_REPORTED_TO,
++                DD_FAIL_QUIETLY_ENOENT | DD_LOAD_TEXT_RETURN_NULL_ON_FAILURE);
+     if (!reported_to)
+         return NULL;
+
+@@ -864,47 +916,9 @@ report_result_t *find_in_reported_to(struct dump_dir *dd, const char *prefix)
+     return result;
+ }
+
+-DIR *dd_init_next_file(struct dump_dir *dd)
+-{
+-//    if (!dd->locked)
+-//        error_msg_and_die("dump_dir is not opened"); /* bug */
+-
+-    if (dd->next_dir)
+-        closedir(dd->next_dir);
+-
+-    dd->next_dir = opendir(dd->dd_dirname);
+-    if (!dd->next_dir)
+-    {
+-        error_msg("Can't open directory '%s'", dd->dd_dirname);
+-    }
+-
+-    return dd->next_dir;
+-}
+-
+-int dd_get_next_file(struct dump_dir *dd, char **short_name, char **full_name)
+-{
+-    if (dd->next_dir == NULL)
+-        return 0;
+-
+-    struct dirent *dent;
+-    while ((dent = readdir(dd->next_dir)) != NULL)
+-    {
+-        if (is_regular_file(dent, dd->dd_dirname))
+-        {
+-            if (short_name)
+-                *short_name = xstrdup(dent->d_name);
+-            if (full_name)
+-                *full_name = concat_path_file(dd->dd_dirname, dent->d_name);
+-            return 1;
+-        }
+-    }
+-
+-    closedir(dd->next_dir);
+-    dd->next_dir = NULL;
+-    return 0;
+-}
+
+ /* Utility function */
++
+ void delete_dump_dir(const char *dirname)
+ {
+     struct dump_dir *dd = dd_opendir(dirname, /*flags:*/ 0);
+1.7.6
+

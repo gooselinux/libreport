@@ -1,0 +1,801 @@
+From 39ef1b95e43a3ba848bfe1bf3078420373c89c52 Mon Sep 17 00:00:00 2001
+From: Denys Vlasenko <dvlasenk@redhat.com>
+Date: Tue, 18 Oct 2011 18:25:47 +0200
+Subject: [PATCH 1/5] reporter-rhtsupport: fixes to "check for hints before
+ creating ticket" code
+
+Signed-off-by: Denys Vlasenko <dvlasenk@redhat.com>
+---
+ src/plugins/Makefile.am                 |    2 +
+ src/plugins/abrt_rh_support.c           |  246 +++++++++++++++++++++----------
+ src/plugins/abrt_rh_support.h           |   27 +++-
+ src/plugins/reporter-rhtsupport-parse.c |  213 ++++++++++++++++++++++++++
+ src/plugins/reporter-rhtsupport.c       |   77 +++++++++-
+ src/plugins/reporter-rhtsupport.h       |   20 +++
+ 6 files changed, 496 insertions(+), 89 deletions(-)
+ create mode 100644 src/plugins/reporter-rhtsupport-parse.c
+ create mode 100644 src/plugins/reporter-rhtsupport.h
+
+diff --git a/src/plugins/Makefile.am b/src/plugins/Makefile.am
+index 1f80447..cee4f14 100644
+--- a/src/plugins/Makefile.am
++++ b/src/plugins/Makefile.am
+@@ -102,6 +102,8 @@ reporter_bugzilla_LDADD = \
+ 
+ reporter_rhtsupport_SOURCES = \
+     abrt_rh_support.h abrt_rh_support.c \
++    reporter-rhtsupport.h \
++    reporter-rhtsupport-parse.c \
+     reporter-rhtsupport.c
+ reporter_rhtsupport_CPPFLAGS = \
+     -I$(srcdir)/../include \
+diff --git a/src/plugins/abrt_rh_support.c b/src/plugins/abrt_rh_support.c
+index 3f14579..aff34c6 100644
+--- a/src/plugins/abrt_rh_support.c
++++ b/src/plugins/abrt_rh_support.c
+@@ -217,6 +217,7 @@ void free_rhts_result(rhts_result_t *p)
+         return;
+     free(p->url);
+     free(p->msg);
++    free(p->body);
+     free(p);
+ }
+ 
+@@ -301,20 +302,24 @@ make_response(const char* title, const char* body,
+ //<response><title>Case Created and Report Attached</title><body></body><URL href="http://support-services-devel.gss.redhat.com:8080/Strata/cases/00005129/attachments/ccbf3e65-b941-3db7-a016-6a3831691a32">New Case URL</URL></response>
+ #endif
+ 
+-rhts_result_t*
+-send_report_to_new_case(const char* baseURL,
++static const char *const text_plain_header[] = {
++    "Accept: text/plain",
++    NULL
++};
++
++static rhts_result_t*
++post_case_to_url(const char* url,
+                 const char* username,
+                 const char* password,
+                 bool ssl_verify,
++                const char **additional_headers,
+                 const char* release,
+                 const char* summary,
+                 const char* description,
+-                const char* component,
+-                const char* report_file_name)
++                const char* component)
+ {
+     rhts_result_t *result = xzalloc(sizeof(*result));
+-
+-    char *case_url = concat_path_file(baseURL, "cases");
++    char *url_copy = NULL;
+ 
+     char *product = NULL;
+     char *version = NULL;
+@@ -340,14 +345,11 @@ send_report_to_new_case(const char* baseURL,
+     case_state->username = username;
+     case_state->password = password;
+ 
+-    static const char *headers[] = {
+-        "Accept: text/plain",
+-        NULL
+-    };
+-
+-    abrt_post_string(case_state, case_url, "application/xml", headers, case_data);
++    abrt_post_string(case_state, url, "application/xml", additional_headers, case_data);
+ 
+     char *case_location = find_header_in_abrt_post_state(case_state, "Location:");
++    result->http_resp_code = case_state->http_resp_code;
++
+     switch (case_state->http_resp_code)
+     {
+     case 404:
+@@ -356,8 +358,8 @@ send_report_to_new_case(const char* baseURL,
+          * instead of returning html-encoded body, we show short concise message,
+          * and show offending URL (typos in which is a typical cause) */
+         result->error = -1;
+-        result->msg = xasprintf("error in case creation, "
+-                        "HTTP code: 404 (Not found), URL:'%s'", case_url);
++        result->msg = xasprintf("error in HTTP POST, "
++                        "HTTP code: 404 (Not found), URL:'%s'", url);
+         break;
+ 
+     case 301: /* "301 Moved Permanently" (for example, used to move http:// to https://) */
+@@ -365,14 +367,28 @@ send_report_to_new_case(const char* baseURL,
+     case 305: /* "305 Use Proxy" */
+         if (++redirect_count < 10 && case_location)
+         {
+-            free(case_url);
+-            case_url = xstrdup(case_location);
++            free(url_copy);
++            url = url_copy = xstrdup(case_location);
+             free_abrt_post_state(case_state);
+             goto redirect_case;
+         }
+         /* fall through */
+ 
+     default:
++        // TODO: error messages in headers
++        // are observed to be more informative than the body:
++        //
++        // 'HTTP/1.1 400 Bad Request'
++        // 'Date: Mon, 10 Oct 2011 13:31:56 GMT^M'
++        // 'Server: Apache^M'
++        // 'Strata-Message: The supplied parameter Fedora value  can not be processed^M'
++        // ^^^^^^^^^^^^^^^^^^^^^^^^^ useful message
++        // 'Strata-Code: BAD_PARAMETER^M'
++        // 'Content-Length: 1^M'
++        // 'Content-Type: text/plain; charset=UTF-8^M'
++        // 'Connection: close^M'
++        // '^M'
++        // ' '  <------ body is useless
+         result->error = -1;
+         errmsg = case_state->curl_error_msg;
+         if (errmsg && errmsg[0])
+@@ -389,95 +405,169 @@ send_report_to_new_case(const char* baseURL,
+                 result->msg = xasprintf("error in case creation, HTTP code: %d",
+                         case_state->http_resp_code);
+         }
++        result->body = case_state->body;
++        case_state->body = NULL;
+         break;
+ 
+     case 200:
+-    case 201: {
+-        if (!case_location) {
+-            /* Case Creation returned valid code, but no location */
+-            result->error = -1;
+-            result->msg = xasprintf("error in case creation: no Location URL, HTTP code: %d",
+-                    case_state->http_resp_code);
+-            break;
+-        }
++    case 201:
++        /* Cose created successfully */
++        result->url = xstrdup(case_location);
++        //result->msg = xstrdup("Case created");
++        result->body = case_state->body;
++        case_state->body = NULL;
++    } /* switch (case HTTP code) */
+ 
+-        char *atch_url = concat_path_file(case_location, "attachments");
+-        abrt_post_state_t *atch_state;
+- redirect_attach:
+-        atch_state = new_abrt_post_state(0
+-                + ABRT_POST_WANT_HEADERS
+-                + ABRT_POST_WANT_BODY
+-                + ABRT_POST_WANT_ERROR_MSG
+-                + (ssl_verify ? ABRT_POST_WANT_SSL_VERIFY : 0)
++    free_abrt_post_state(case_state);
++    free(allocated);
++    free(case_data);
++    free(url_copy);
++    return result;
++}
++
++rhts_result_t*
++create_new_case(const char* base_url,
++                const char* username,
++                const char* password,
++                bool ssl_verify,
++                const char* release,
++                const char* summary,
++                const char* description,
++                const char* component)
++{
++    char *url = concat_path_file(base_url, "cases");
++    rhts_result_t *result = post_case_to_url(url,
++                username,
++                password,
++                ssl_verify,
++                (const char **)text_plain_header,
++                release,
++                summary,
++                description,
++                component
++    );
++    free(url);
++
++    if (!result->url)
++    {
++        /* Case Creation returned valid code, but no location */
++        result->error = -1;
++        free(result->msg);
++        result->msg = xasprintf("error in case creation: no Location URL, HTTP code: %d",
++                result->http_resp_code
+         );
+-        atch_state->username = username;
+-        atch_state->password = password;
++    }
++
++    return result;
++}
++
++rhts_result_t*
++get_rhts_hints(const char* base_url,
++                const char* username,
++                const char* password,
++                bool ssl_verify,
++                const char* release,
++                const char* summary,
++                const char* description,
++                const char* component)
++{
++    char *url = concat_path_file(base_url, "problems");
++    rhts_result_t *result = post_case_to_url(url,
++                username,
++                password,
++                ssl_verify,
++                NULL,
++                release,
++                summary,
++                description,
++                component
++    );
++    free(url);
++    return result;
++}
+ 
+-        abrt_post_file_as_form(atch_state, atch_url, "application/binary", headers,
+-                               report_file_name);
++rhts_result_t*
++attach_file_to_case(const char* baseURL,
++                const char* username,
++                const char* password,
++                bool ssl_verify,
++                const char *file_name)
++{
++    rhts_result_t *result = xzalloc(sizeof(*result));
+ 
+-        switch (atch_state->http_resp_code)
++    int redirect_count = 0;
++    char *atch_url = concat_path_file(baseURL, "attachments");
++    abrt_post_state_t *atch_state;
++
++ redirect_attach:
++    atch_state = new_abrt_post_state(0
++            + ABRT_POST_WANT_HEADERS
++            + ABRT_POST_WANT_BODY
++            + ABRT_POST_WANT_ERROR_MSG
++            + (ssl_verify ? ABRT_POST_WANT_SSL_VERIFY : 0)
++    );
++    atch_state->username = username;
++    atch_state->password = password;
++    abrt_post_file_as_form(atch_state,
++        atch_url,
++        "application/binary",
++        (const char **) text_plain_header,
++        file_name
++    );
++
++    switch (atch_state->http_resp_code)
++    {
++    case 305: /* "305 Use Proxy" */
+         {
+-        case 305: /* "305 Use Proxy" */
++            char *atch_location = find_header_in_abrt_post_state(atch_state, "Location:");
++            if (++redirect_count < 10 && atch_location)
+             {
+-                char *atch_location = find_header_in_abrt_post_state(atch_state, "Location:");
+-                if (++redirect_count < 10 && atch_location)
+-                {
+-                    free(atch_url);
+-                    atch_url = xstrdup(atch_location);
+-                    free_abrt_post_state(atch_state);
+-                    goto redirect_attach;
+-                }
++                free(atch_url);
++                atch_url = xstrdup(atch_location);
++                free_abrt_post_state(atch_state);
++                goto redirect_attach;
+             }
+-            /* fall through */
++        }
++        /* fall through */
+ 
+-        default:
+-            /* Case Creation Succeeded, attachement FAILED */
+-            errmsg = atch_state->curl_error_msg;
++    default:
++        /* Error */
++        {
++            char *allocated = NULL;
++            const char *errmsg = atch_state->curl_error_msg;
+             if (atch_state->body && atch_state->body[0])
+             {
+                 if (errmsg && errmsg[0]
+                  && strcmp(errmsg, atch_state->body) != 0
+                 ) /* both strata/curl error and body are present (and aren't the same) */
+-                    allocated = errmsg = xasprintf("%s. %s",
++                    errmsg = allocated = xasprintf("%s. %s",
+                             atch_state->body,
+                             errmsg);
+                 else /* only body exists */
+                     errmsg = atch_state->body;
+             }
+             result->error = -1;
+-            result->url = xstrdup(case_location);
+-            result->msg = xasprintf("Case created but report attachment failed (HTTP code %d)%s%s",
++            result->msg = xasprintf("Attachment failed (HTTP code %d)%s%s",
+                     atch_state->http_resp_code,
+                     errmsg ? ": " : "",
+                     errmsg ? errmsg : ""
+             );
+-            break;
+-
+-        case 200:
+-        case 201:
+-            // unused
+-            //char *body = atch_state->body;
+-            //if (case_state->body && case_state->body[0])
+-            //{
+-            //    body = case_state->body;
+-            //    if (atch_state->body && atch_state->body[0])
+-            //        allocated = body = xasprintf("%s\n%s",
+-            //                case_state->body,
+-            //                atch_state->body);
+-            //}
+-            result->url = xstrdup(case_location);
+-            result->msg = xstrdup("Case created");
+-        } /* switch (attach HTTP code) */
+-
+-        free_abrt_post_state(atch_state);
+-        free(atch_url);
+-    } /* case 200/201 */
++            free(allocated);
++        }
++        break;
+ 
+-    } /* switch (case HTTP code) */
++    case 200:
++    case 201:
++        {
++            char *loc = find_header_in_abrt_post_state(atch_state, "Location:");
++            if (loc)
++                result->url = xstrdup(loc);
++            //result->msg = xstrdup("File attached successfully");
++        }
++    } /* switch */
+ 
+-    free_abrt_post_state(case_state);
+-    free(allocated);
+-    free(case_url);
++    free_abrt_post_state(atch_state);
++    free(atch_url);
+     return result;
+ }
++
+diff --git a/src/plugins/abrt_rh_support.h b/src/plugins/abrt_rh_support.h
+index 884dc4c..9c9f05d 100644
+--- a/src/plugins/abrt_rh_support.h
++++ b/src/plugins/abrt_rh_support.h
+@@ -40,24 +40,45 @@ const char* reportfile_as_string(reportfile_t* file);
+ 
+ /* Used to return result of RHTS submission */
+ struct rhts_result {
++    int http_resp_code;
+     int error; /* 0: no error; else: error code, msg contains error msg. */
+     char *msg;
+     char *url; /* URL to created case, or NULL */
++    char *body; /* body of the response, or NULL */
+ };
+ typedef struct rhts_result rhts_result_t;
+ 
+ void free_rhts_result(rhts_result_t *p);
+ 
+ rhts_result_t*
+-send_report_to_new_case(const char* baseURL,
++get_rhts_hints(const char* baseURL,
+                 const char* username,
+                 const char* password,
+                 bool ssl_verify,
+                 const char* release,
+                 const char* summary,
+                 const char* description,
+-                const char* component,
+-                const char* report_file_name);
++                const char* component
++);
++
++rhts_result_t*
++create_new_case(const char* baseURL,
++                const char* username,
++                const char* password,
++                bool ssl_verify,
++                const char* release,
++                const char* summary,
++                const char* description,
++                const char* component
++);
++
++rhts_result_t*
++attach_file_to_case(const char* baseURL,
++                const char* username,
++                const char* password,
++                bool ssl_verify,
++                const char* file_name
++);
+ 
+ #ifdef __cplusplus
+ }
+diff --git a/src/plugins/reporter-rhtsupport-parse.c b/src/plugins/reporter-rhtsupport-parse.c
+new file mode 100644
+index 0000000..71ede42
+--- /dev/null
++++ b/src/plugins/reporter-rhtsupport-parse.c
+@@ -0,0 +1,213 @@
++/*
++    Copyright (C) 2011  ABRT Team
++    Copyright (C) 2011  RedHat inc.
++
++    This program is free software; you can redistribute it and/or modify
++    it under the terms of the GNU General Public License as published by
++    the Free Software Foundation; either version 2 of the License, or
++    (at your option) any later version.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++    GNU General Public License for more details.
++
++    You should have received a copy of the GNU General Public License along
++    with this program; if not, write to the Free Software Foundation, Inc.,
++    51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
++*/
++#include "internal_libreport.h"
++#include "reporter-rhtsupport.h"
++
++struct my_parse_data
++{
++    int type;
++    char *uri;
++    char *txt;
++    GList *hints_uri;
++    GList *hints_txt;
++    GList *erratas_uri;
++    GList *erratas_txt;
++};
++
++// Called for opening tags <foo bar="baz">
++static void start_element(
++                GMarkupParseContext *context,
++                const gchar         *element_name,
++                const gchar         **attribute_names,
++                const gchar         **attribute_values,
++                gpointer            user_data,
++                GError              **error)
++{
++    //log("start: %s", element_name);
++
++    struct my_parse_data *parse_data = user_data;
++
++    if (strcmp(element_name, "link") == 0)
++    {
++        const char *uri = NULL;
++        int type = 0;
++        for (int i = 0; attribute_names[i] != NULL; ++i)
++        {
++            VERB2 log("attr: %s:%s", attribute_names[i], attribute_values[i]);
++            if (strcmp(attribute_names[i], "uri") == 0)
++            {
++                uri = attribute_values[i];
++            }
++            else if (strcmp(attribute_names[i], "rel") == 0)
++            {
++                if (strcmp(attribute_values[i], "suggestion") == 0)
++                    type = 1;
++                else if (strncmp(attribute_values[i], "errata", 6) == 0)
++                    type = 2;
++            }
++        }
++        if (uri && type)
++        {
++            free(parse_data->uri); /* paranoia */
++            parse_data->uri = xstrdup(uri);
++            parse_data->type = type;
++        }
++    }
++}
++
++// Called for character data between opening and closing tags
++// text is not nul-terminated
++static void text(
++                GMarkupParseContext *context,
++                const gchar         *text,
++                gsize               text_len,
++                gpointer            user_data,
++                GError              **error)
++{
++    struct my_parse_data *parse_data = user_data;
++
++    /* if we are inside valid <link> element... */
++    if (parse_data->uri && text_len > 0)
++    {
++        free(parse_data->txt);
++        parse_data->txt = xstrndup(text, text_len);
++    }
++}
++
++// Called for close tags </foo>
++static void end_element(
++                GMarkupParseContext *context,
++                const gchar         *element_name,
++                gpointer            user_data,
++                GError              **error)
++{
++    struct my_parse_data *parse_data = user_data;
++
++    /* if we are closing valid <link> element... */
++    if (parse_data->uri)
++    {
++        /* Note that parse_data->txt may be NULL below */
++        if (parse_data->type == 1) /* "suggestion"? */
++        {
++            parse_data->hints_uri = g_list_append(parse_data->hints_uri, parse_data->uri);
++            parse_data->hints_txt = g_list_append(parse_data->hints_txt, parse_data->txt);
++        }
++        else
++        {
++            parse_data->erratas_uri = g_list_append(parse_data->erratas_uri, parse_data->uri);
++            parse_data->erratas_txt = g_list_append(parse_data->erratas_txt, parse_data->txt);
++        }
++        parse_data->uri = NULL;
++        parse_data->txt = NULL;
++    }
++}
++
++// Called for strings that should be re-saved verbatim in this same
++// position, but are not otherwise interpretable.  At the moment
++// this includes comments and processing instructions.
++// text is not nul-terminated
++static void passthrough(
++                GMarkupParseContext *context,
++                const gchar         *passthrough_text,
++                gsize               text_len,
++                gpointer            user_data,
++                GError              **error)
++{
++    VERB3 log("passthrough");
++}
++
++// Called on error, including one set by other
++// methods in the vtable. The GError should not be freed.
++static void error(
++                GMarkupParseContext *context,
++                GError              *error,
++                gpointer            user_data)
++{
++    error_msg("error in XML parsing");
++}
++
++static void emit_url_text_pairs_to_strbuf(struct strbuf *result, GList *urllist, GList *txtlist)
++{
++    const char *prefix = "";
++    while (urllist)
++    {
++        if (txtlist->data)
++        {
++            strbuf_append_strf(result, "%s%s : %s", prefix, urllist->data, txtlist->data);
++            free(txtlist->data);
++        }
++        else
++        {
++            strbuf_append_strf(result, "%s%s", prefix, urllist->data);
++        }
++        free(urllist->data);
++        prefix = ", ";
++        urllist = g_list_delete_link(urllist, urllist);
++        txtlist = g_list_delete_link(txtlist, txtlist);
++    }
++}
++
++char *parse_response_from_RHTS_hint_xml2txt(const char *string)
++{
++    if (strncmp(string, "<?xml", 5) != 0)
++        return xstrdup(string);
++
++    struct my_parse_data parse_data;
++    memset(&parse_data, 0, sizeof(parse_data));
++
++    GMarkupParser parser;
++    memset(&parser, 0, sizeof(parser)); /* just in case */
++    parser.start_element = &start_element;
++    parser.end_element = &end_element;
++    parser.text = &text;
++    parser.passthrough = &passthrough;
++    parser.error = &error;
++
++    GMarkupParseContext *context = g_markup_parse_context_new(
++                    &parser, G_MARKUP_TREAT_CDATA_AS_TEXT,
++                    &parse_data, /*GDestroyNotify:*/ NULL
++    );
++    g_markup_parse_context_parse(context, string, strlen(string), NULL);
++    g_markup_parse_context_free(context);
++
++    free(parse_data.uri); /* just in case */
++    free(parse_data.txt); /* just in case */
++
++    if (!parse_data.hints_uri && !parse_data.erratas_uri)
++        return NULL;
++
++    struct strbuf *result = strbuf_new();
++
++    if (parse_data.hints_uri)
++    {
++        strbuf_append_str(result, _("Documentation which might be relevant: "));
++        emit_url_text_pairs_to_strbuf(result, parse_data.hints_uri, parse_data.hints_txt);
++        strbuf_append_str(result, ". ");
++    }
++    if (parse_data.erratas_uri)
++    {
++        if (parse_data.hints_uri)
++            strbuf_append_str(result, " ");
++        strbuf_append_str(result, _("Updates which possibly help: "));
++        emit_url_text_pairs_to_strbuf(result, parse_data.erratas_uri, parse_data.erratas_txt);
++        strbuf_append_str(result, ".");
++    }
++
++    return strbuf_free_nobuf(result);
++}
+diff --git a/src/plugins/reporter-rhtsupport.c b/src/plugins/reporter-rhtsupport.c
+index 9210304..351ef90 100644
+--- a/src/plugins/reporter-rhtsupport.c
++++ b/src/plugins/reporter-rhtsupport.c
+@@ -18,9 +18,11 @@
+ */
+ #include <libtar.h>
+ #include "internal_libreport.h"
++#include "client.h"
+ #include "abrt_curl.h"
+ #include "abrt_xmlrpc.h"
+ #include "abrt_rh_support.h"
++#include "reporter-rhtsupport.h"
+ 
+ static char *url;
+ static char *login;
+@@ -42,6 +44,7 @@ static void report_to_rhtsupport(const char *dump_dir_name)
+     char *tempfile = NULL;
+     reportfile_t *file = NULL;
+     rhts_result_t *result = NULL;
++    rhts_result_t *result_atch = NULL;
+     char *dsc = NULL;
+     char *summary = NULL;
+     const char *function;
+@@ -64,10 +67,7 @@ static void report_to_rhtsupport(const char *dump_dir_name)
+         if (reason)
+             strbuf_append_strf(buf_summary, ": %s", reason);
+         summary = strbuf_free_nobuf(buf_summary);
+-
+-        char *bz_dsc = make_description_bz(problem_data);
+-        dsc = xasprintf("abrt version: "VERSION"\n%s", bz_dsc);
+-        free(bz_dsc);
++        dsc = make_description_bz(problem_data);
+     }
+     file = new_reportfile();
+     const char *dt_string = iso_date_string(NULL);
+@@ -187,17 +187,62 @@ static void report_to_rhtsupport(const char *dump_dir_name)
+         goto ret;
+     }
+ 
++    /* Check for hints and show them if we have something */
++    result = get_rhts_hints(url,
++            login,
++            password,
++            ssl_verify,
++            release,
++            summary,
++            dsc,
++            package
++    );
++#if 0 /* testing */
++    log("ERR:%d", result->error);
++    log("MSG:'%s'", result->msg);
++    log("BODY:'%s'", result->body);
++    result->error = 0;
++    result->body = xstrdup(
++    "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
++    "<problems xmlns=\"http://www.redhat.com/gss/strata\">"
++      "<link uri=\"http://access.redhat.com/\" rel=\"help\">The main Red Hat Support web site</link>"
++      "<property name=\"content\">an ABRT report</property>"
++      "<problem>"
++        "<property name=\"source\">a backtrace in the ABRT report</property>"
++        "<link uri=\"https://avalon-ci.gss.redhat.com/kb/docs/DOC-22029\" rel=\"suggestion\">[RHEL 5.3] EVO autocompletion lookup hang</link>"
++      "</problem>"
++    "</problems>"
++    );
++#endif
++    if (result->error == 0 && result->body)
++    {
++        /* The message might contain URLs to known solutions and such */
++        char *hint = parse_response_from_RHTS_hint_xml2txt(result->body);
++        if (hint)
++        {
++            hint = append_to_malloced_string(hint, " ");
++            hint = append_to_malloced_string(hint,
++                    _("Do you still want to create a RHTSupport ticket?")
++            );
++            int create_ticket = ask_yes_no(hint);
++            free(hint);
++            if (!create_ticket)
++                goto ret;
++        }
++    }
++    free_rhts_result(result);
++    /*result = NULL; - redundant, result is assigned just below */
++
+     /* Send tempfile */
+     log(_("Creating a new case..."));
+-    result = send_report_to_new_case(url,
++    result = create_new_case(url,
+             login,
+             password,
+             ssl_verify,
+             release,
+             summary,
+             dsc,
+-            package,
+-            tempfile
++            package
+     );
+ 
+     if (result->error)
+@@ -225,7 +270,22 @@ static void report_to_rhtsupport(const char *dump_dir_name)
+         goto ret;
+     }
+ 
+-    /* No error */
++    /* No error in case creation. Attach the file. */
++    result_atch = attach_file_to_case(result->url,
++            login,
++            password,
++            ssl_verify,
++            tempfile
++    );
++    if (result_atch->error)
++    {
++        /* Error. Prepend "Case created" text to whatever error message there is,
++         * so that user knows that case _was_ created despite error in attaching.
++         */
++        log("Case created but report attachment failed: %s", result_atch->msg);
++    }
++
++    /* Record "reported_to" element */
+     struct dump_dir *dd = dd_opendir(dump_dir_name, /*flags:*/ 0);
+     if (dd)
+     {
+@@ -271,6 +331,7 @@ static void report_to_rhtsupport(const char *dump_dir_name)
+     free(summary);
+     free(dsc);
+ 
++    free_rhts_result(result_atch);
+     free_rhts_result(result);
+ 
+     free(url);
+diff --git a/src/plugins/reporter-rhtsupport.h b/src/plugins/reporter-rhtsupport.h
+new file mode 100644
+index 0000000..95c692b
+--- /dev/null
++++ b/src/plugins/reporter-rhtsupport.h
+@@ -0,0 +1,20 @@
++/*
++    Copyright (C) 2011  ABRT team
++    Copyright (C) 2011  RedHat Inc
++
++    This program is free software; you can redistribute it and/or modify
++    it under the terms of the GNU General Public License as published by
++    the Free Software Foundation; either version 2 of the License, or
++    (at your option) any later version.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++    GNU General Public License for more details.
++
++    You should have received a copy of the GNU General Public License along
++    with this program; if not, write to the Free Software Foundation, Inc.,
++    51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
++*/
++
++char *parse_response_from_RHTS_hint_xml2txt(const char *string);
+-- 
+1.7.6.4
+

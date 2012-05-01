@@ -1,0 +1,22 @@
+commit f36806440b0b9d5d0dfa2e1c26d8695629c150ff
+Author: Nikola Pajkovsky <npajkovs@redhat.com>
+Date:   Tue Aug 23 11:37:26 2011 +0200
+
+    Dereferencing null variable when config is missing
+    
+    Signed-off-by: Nikola Pajkovsky <npajkovs@redhat.com>
+    (cherry picked from commit 863439314fef3ddff1b4db22d83295c23a387b07)
+
+diff --git a/src/cli/cli-report.c b/src/cli/cli-report.c
+index f203fad..0f92543 100644
+--- a/src/cli/cli-report.c
++++ b/src/cli/cli-report.c
+@@ -783,7 +783,7 @@ int report(const char *dump_dir_name, int flags)
+             if (!is_number_in_string(i, wanted_reporters))
+                 continue;
+ 
+-            if (rating < config->ec_minimal_rating)
++            if (config && (rating < config->ec_minimal_rating))
+             {
+                 puts(_("Reporting disabled because the backtrace is unusable"));
+ 

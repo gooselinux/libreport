@@ -1,0 +1,133 @@
+From f0dab160e0c99ed7d56b7d3891315904d1f63cb7 Mon Sep 17 00:00:00 2001
+From: Denys Vlasenko <dvlasenk@redhat.com>
+Date: Wed, 10 Aug 2011 14:31:27 +0200
+Subject: [PATCH 5/9] reporter-rhtsupport: stop hardcoding RHEL
+ product/version
+
+Signed-off-by: Denys Vlasenko <dvlasenk@redhat.com>
+---
+ src/lib/parse_release.c           |   13 +++++++++++--
+ src/plugins/abrt_rh_support.c     |   10 ++++++++--
+ src/plugins/abrt_rh_support.h     |    1 +
+ src/plugins/reporter-rhtsupport.c |   27 ++++++++++++++++-----------
+ 4 files changed, 36 insertions(+), 15 deletions(-)
+
+diff --git a/src/lib/parse_release.c b/src/lib/parse_release.c
+index 889f539..48e9eb6 100644
+--- a/src/lib/parse_release.c
++++ b/src/lib/parse_release.c
+@@ -43,11 +43,20 @@ static void parse_release(const char *release, char** product, char** version, b
+     /* examples of release strings:
+      * installed system: Red Hat Enterprise Linux Server release 6.2 Beta (Santiago)
+      * anaconda: Red Hat Enterprise Linux 6.2
+-       * ^ note missing "release"
+-     * so the following parsing would fail, workaround is in python bindings
+      */
+     const char *r = strstr(release, "release");
+     const char *space = r ? strchr(r, ' ') : NULL;
++    if (!space)
++    {
++        /* Try to find "<space><digit>" sequence */
++        space = release;
++        while ((space = strchr(space, ' ')) != NULL)
++        {
++            if (space[1] >= '0' && space[1] <= '9')
++                break;
++            space++;
++        }
++    }
+ 
+     struct strbuf *buf_version = strbuf_new();
+     if (space)
+diff --git a/src/plugins/abrt_rh_support.c b/src/plugins/abrt_rh_support.c
+index a3b6729..1ee5706 100644
+--- a/src/plugins/abrt_rh_support.c
++++ b/src/plugins/abrt_rh_support.c
+@@ -306,6 +306,7 @@ send_report_to_new_case(const char* baseURL,
+                 const char* username,
+                 const char* password,
+                 bool ssl_verify,
++                const char* release,
+                 const char* summary,
+                 const char* description,
+                 const char* component,
+@@ -313,11 +314,16 @@ send_report_to_new_case(const char* baseURL,
+ {
+     rhts_result_t *result = xzalloc(sizeof(*result));
+ 
+-    char *case_url = concat_path_file(baseURL, "/cases");
++    char *case_url = concat_path_file(baseURL, "cases");
+ 
++    char *product = NULL;
++    char *version = NULL;
++    parse_release_for_rhts(release, &product, &version);
+     char *case_data = make_case_data(summary, description,
+-                                         "Red Hat Enterprise Linux", "6.0",
++                                         product, version,
+                                          component);
++    free(product);
++    free(version);
+ 
+     int redirect_count = 0;
+     char *errmsg;
+diff --git a/src/plugins/abrt_rh_support.h b/src/plugins/abrt_rh_support.h
+index dd0036d..884dc4c 100644
+--- a/src/plugins/abrt_rh_support.h
++++ b/src/plugins/abrt_rh_support.h
+@@ -53,6 +53,7 @@ send_report_to_new_case(const char* baseURL,
+                 const char* username,
+                 const char* password,
+                 bool ssl_verify,
++                const char* release,
+                 const char* summary,
+                 const char* description,
+                 const char* component,
+diff --git a/src/plugins/reporter-rhtsupport.c b/src/plugins/reporter-rhtsupport.c
+index c91353d..99e643c 100644
+--- a/src/plugins/reporter-rhtsupport.c
++++ b/src/plugins/reporter-rhtsupport.c
+@@ -36,18 +36,22 @@ static void report_to_rhtsupport(const char *dump_dir_name)
+     /* Gzipping e.g. 0.5gig coredump takes a while. Let client know what we are doing */
+     log(_("Compressing data"));
+ 
+-    const char* errmsg = NULL;
+-    TAR* tar = NULL;
++    const char *errmsg = NULL;
++    TAR *tar = NULL;
+     pid_t child;
+-    char* tempfile = NULL;
+-    reportfile_t* file = NULL;
+-    rhts_result_t* result = NULL;
+-    char* dsc = NULL;
+-    char* summary = NULL;
+-    const char* function;
+-    const char* reason;
+-    const char* package;
+-
++    char *tempfile = NULL;
++    reportfile_t *file = NULL;
++    rhts_result_t *result = NULL;
++    char *dsc = NULL;
++    char *summary = NULL;
++    const char *function;
++    const char *reason;
++    const char *package;
++    const char *release;
++
++    release  = get_problem_item_content_or_NULL(problem_data, FILENAME_OS_RELEASE);
++    if (!release) /* Old dump dir format compat. Remove in abrt-2.1 */
++        release = get_problem_item_content_or_NULL(problem_data, "release");
+     package  = get_problem_item_content_or_NULL(problem_data, FILENAME_PACKAGE);
+     reason   = get_problem_item_content_or_NULL(problem_data, FILENAME_REASON);
+     function = get_problem_item_content_or_NULL(problem_data, FILENAME_CRASH_FUNCTION);
+@@ -192,6 +196,7 @@ static void report_to_rhtsupport(const char *dump_dir_name)
+             login,
+             password,
+             ssl_verify,
++            release,
+             summary,
+             dsc,
+             package,
+-- 
+1.7.6
+

@@ -1,0 +1,32 @@
+From 398cdf29980543d887059c91383b313b69516836 Mon Sep 17 00:00:00 2001
+From: Jiri Moskovcak <jmoskovc@redhat.com>
+Date: Tue, 18 Oct 2011 21:43:43 +0200
+Subject: [PATCH 3/5] added files with translatable strings to POTFILES.in
+
+---
+ po/POTFILES.in |    2 ++
+ 1 files changed, 2 insertions(+), 0 deletions(-)
+
+diff --git a/po/POTFILES.in b/po/POTFILES.in
+index 961796f..d88c6fb 100644
+--- a/po/POTFILES.in
++++ b/po/POTFILES.in
+@@ -12,6 +12,7 @@ src/lib/parse_options.c
+ src/lib/abrt_curl.c
+ src/lib/client.c
+ src/lib/run_event.c
++src/plugins/abrt_rh_support.c
+ src/plugins/report.c
+ src/plugins/report_Bugzilla.xml.in
+ src/plugins/report_Kerneloops.xml.in
+@@ -24,6 +25,7 @@ src/plugins/reporter-kerneloops.c
+ src/plugins/reporter-mailx.c
+ src/plugins/reporter-print.c
+ src/plugins/reporter-rhtsupport.c
++src/plugins/reporter-rhtsupport-parse.c
+ src/plugins/reporter-upload.c
+ src/plugins/rhbz.c
+ src/report-newt/report-newt.c
+-- 
+1.7.6.4
+

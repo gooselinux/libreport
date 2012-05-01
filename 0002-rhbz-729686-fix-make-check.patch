@@ -1,0 +1,267 @@
+From 106625d21cfb4a0057cf3f17859114aee99a03ed Mon Sep 17 00:00:00 2001
+From: Nikola Pajkovsky <npajkovs@redhat.com>
+Date: Fri, 12 Aug 2011 15:39:58 +0200
+Subject: [PATCH 02/15] rhbz#729686 - fix make check
+
+code was moved from abrt.git
+
+checking strbuf doesn't belog in abrt.git because the code for strbuf
+lying in libreport.git
+
+Signed-off-by: Nikola Pajkovsky <npajkovs@redhat.com>
+(cherry picked from commit d15ef73d9426d74fa1d20e7909f215a26656895a)
+---
+ Makefile.am        |    2 +-
+ configure.ac       |    8 +++---
+ tests/Makefile.am  |   54 ++++++++++++++++++++++++++++++++++++++
+ tests/atlocal.in   |   15 ++++++++++
+ tests/local.at     |   27 +++++++++++++++++++
+ tests/strbuf.at    |   73 ++++++++++++++++++++++++++++++++++++++++++++++++++++
+ tests/testsuite.at |    4 +++
+ 8 files changed, 185 insertions(+), 5 deletions(-)
+ create mode 100644 tests/Makefile.am
+ create mode 100644 tests/atlocal.in
+ create mode 100644 tests/local.at
+ create mode 100644 tests/strbuf.at
+ create mode 100644 tests/testsuite.at
+
+ # misc
+ \#*
+ *~
+diff --git a/Makefile.am b/Makefile.am
+index 347186d..c6694b9 100644
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -1,5 +1,5 @@
+ ACLOCAL_AMFLAGS = -I m4
+-SUBDIRS = po src
++SUBDIRS = po src tests
+ 
+ EXTRA_DIST = \
+     libreport.pc.in \
+diff --git a/configure.ac b/configure.ac
+index 4b01af6..c0eecf0 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -105,11 +105,11 @@ AC_SUBST(DEBUG_DUMPS_DIR)
+ AC_SUBST(LIBEXEC_DIR)
+ 
+ # Initialize the test suite.
+-# AC_CONFIG_TESTDIR(tests)
+-# AC_CONFIG_FILES([tests/Makefile tests/atlocal])
+-# AM_MISSING_PROG([AUTOM4TE], [autom4te])
++ AC_CONFIG_TESTDIR(tests)
++ AC_CONFIG_FILES([tests/Makefile tests/atlocal])
++ AM_MISSING_PROG([AUTOM4TE], [autom4te])
+ # Needed by tests/atlocal.in.
+-# AC_SUBST([O0CFLAGS], [`echo $CFLAGS   | sed 's/-O[[0-9]] *//'`])
++AC_SUBST([O0CFLAGS], [`echo $CFLAGS   | sed 's/-O[[0-9]] *//'`])
+ 
+ AC_CONFIG_HEADERS([config.h])
+ 
+diff --git a/tests/Makefile.am b/tests/Makefile.am
+new file mode 100644
+index 0000000..44bb6b4
+--- /dev/null
++++ b/tests/Makefile.am
+@@ -0,0 +1,54 @@
++## ------------ ##
++## package.m4.  ##
++## ------------ ##
++
++package.m4: Makefile.in
++	{ \
++             echo '# Signature of the current package.' && \
++             echo 'm4_define([AT_PACKAGE_NAME],' && \
++             echo '  [@PACKAGE_NAME@])' && \
++             echo 'm4_define([AT_PACKAGE_TARNAME],' && \
++             echo '  [@PACKAGE_TARNAME@])' && \
++             echo 'm4_define([AT_PACKAGE_VERSION],' && \
++             echo '  [@PACKAGE_VERSION@])' && \
++             echo 'm4_define([AT_PACKAGE_STRING],' && \
++             echo '  [@PACKAGE_STRING@])' && \
++             echo 'm4_define([AT_PACKAGE_BUGREPORT],' && \
++             echo '  [@PACKAGE_BUGREPORT@])'; \
++             echo 'm4_define([AT_PACKAGE_URL],' && \
++             echo '  [@PACKAGE_URL@])'; \
++	} >'package.m4'
++EXTRA_DIST = package.m4
++
++## ------------ ##
++## Test suite.  ##
++## ------------ ##
++
++TESTSUITE_AT = \
++  local.at \
++  testsuite.at \
++  strbuf.at
++
++EXTRA_DIST += $(TESTSUITE_AT)
++TESTSUITE = $(srcdir)/testsuite
++MAINTAINERCLEANFILES = Makefile.in $(TESTSUITE)
++check_DATA = atconfig atlocal $(TESTSUITE)
++DISTCLEANFILES = atconfig
++EXTRA_DIST += atlocal.in
++
++atconfig: $(top_builddir)/config.status
++	(cd ${top_builddir} && ./config.status ${subdir}/atconfig)
++
++check-local: $(check_DATA)
++	$(SHELL) '$(TESTSUITE)' $(TESTSUITEFLAGS) ||:
++
++installcheck-local: $(check_DATA)
++	$(SHELL) '$(TESTSUITE)' AUTOTEST_PATH='$(bindir)' $(TESTSUITEFLAGS) ||:
++
++clean-local:
++	test ! -f '$(TESTSUITE)' || $(SHELL) '$(TESTSUITE)' --clean
++
++AUTOTEST = $(AUTOM4TE) --language=autotest
++$(TESTSUITE): $(TESTSUITE_AT) $(srcdir)/package.m4
++	$(AUTOTEST) -I '$(srcdir)' -o $@.tmp $@.at
++	mv $@.tmp $@
+diff --git a/tests/atlocal.in b/tests/atlocal.in
+new file mode 100644
+index 0000000..de90813
+--- /dev/null
++++ b/tests/atlocal.in
+@@ -0,0 +1,15 @@
++# @configure_input@                                     -*- shell-script -*-
++# Configurable variable values for btparser test suite.
++
++# We need a C compiler.
++CC='@CC@'
++LIBTOOL="$abs_top_builddir/libtool"
++
++# We want no optimization.
++CFLAGS="@O0CFLAGS@ -I$abs_top_builddir/src/include -D_GNU_SOURCE @GLIB_CFLAGS@"
++
++# Are special link options needed?
++LDFLAGS="@LDFLAGS@ $abs_top_builddir/src/lib/libreport.la"
++
++# Are special libraries needed?
++LIBS="@LIBS@"
+diff --git a/tests/local.at b/tests/local.at
+new file mode 100644
+index 0000000..758906d
+--- /dev/null
++++ b/tests/local.at
+@@ -0,0 +1,27 @@
++# Source: bison local.at
++
++# ----------------------------------------
++# AT_COMPILE(OUTPUT, [SOURCES = OUTPUT.c])
++# ----------------------------------------
++# Compile SOURCES into OUTPUT.  If OUTPUT does not contain '.',
++# assume that we are linking too; this is a hack.
++m4_define([AT_COMPILE],
++[AT_CHECK([$LIBTOOL --mode=link $CC $CFLAGS m4_bmatch([$1], [[.]], [], [$LDFLAGS ])-o $1 m4_default([$2], [$1.c])[]m4_bmatch([$1], [[.]], [], [ $LIBS])],
++          0, [ignore], [ignore])])
++
++# ------------------------
++# AT_TESTFUN(NAME, SOURCE)
++# ------------------------
++
++# Create a test named NAME by compiling and running C file with
++# contents SOURCE.  The stdout and stderr output of the C program is
++# ignored by Autotest.
++
++m4_define([AT_TESTFUN],
++[AT_SETUP([$1])
++AT_DATA([$1.c], [$2])
++AT_COMPILE([$1])
++AT_CHECK([./$1], 0, [ignore], [ignore])
++AT_CLEANUP])
++
++AT_INIT
+diff --git a/tests/strbuf.at b/tests/strbuf.at
+new file mode 100644
+index 0000000..9f1d6ef
+--- /dev/null
++++ b/tests/strbuf.at
+@@ -0,0 +1,73 @@
++# -*- Autotest -*-
++
++AT_BANNER([strbuf])
++
++## ---------------------- ##
++## strbuf_append_char ##
++## ---------------------- ##
++
++AT_TESTFUN([strbuf_append_char],
++[[
++#include "internal_libreport.h"
++#include <assert.h>
++int main(void)
++{
++  int i;
++  struct strbuf *strbuf = strbuf_new();
++  for (i = 0; i < 100; ++i)
++  {
++    assert(strbuf->len == i);
++    assert(strbuf->alloc > strbuf->len);
++    assert(strbuf->buf[i] == '\0');
++    strbuf_append_char(strbuf, 'a');
++    assert(strbuf->buf[i] == 'a');
++    assert(strbuf->buf[i+1] == '\0');
++    assert(strbuf->len == i + 1);
++    assert(strbuf->alloc > strbuf->len);
++  }
++  strbuf_free(strbuf);
++  return 0;
++}
++]])
++
++## --------------------- ##
++## strbuf_append_str ##
++## --------------------- ##
++
++AT_TESTFUN([strbuf_append_str],
++[[
++#include "internal_libreport.h"
++#include <assert.h>
++
++/* Test appending strings of certain length. 'len' must be < 50. */
++void test(int len)
++{
++  int i;
++  char str[50];
++  for (i = 0; i < len; ++i)
++    str[i] = 'a';
++  str[i] = '\0';
++
++  struct strbuf *strbuf = strbuf_new();
++  for (i = 0; i < 100; ++i)
++  {
++    assert(strbuf->len == i*len);
++    assert(strbuf->alloc > strbuf->len);
++    assert(strbuf->buf[i*len] == '\0');
++    strbuf_append_str(strbuf, str);
++    assert(strbuf->buf[i*len] == str[0]);
++    assert(strbuf->buf[i*len+len] == '\0');
++    assert(strbuf->len == i*len + len);
++    assert(strbuf->alloc > strbuf->len);
++  }
++  strbuf_free(strbuf);
++}
++
++int main(void)
++{
++  int i;
++  for (i = 0; i < 50; ++i)
++    test(i);
++  return 0;
++}
++]])
+diff --git a/tests/testsuite.at b/tests/testsuite.at
+new file mode 100644
+index 0000000..5137b41
+--- /dev/null
++++ b/tests/testsuite.at
+@@ -0,0 +1,4 @@
++# Test suite for abrt.
++# See http://www.gnu.org/software/hello/manual/autoconf/Writing-Testsuites.html
++
++m4_include([strbuf.at])
+-- 
+1.7.6.1
+
